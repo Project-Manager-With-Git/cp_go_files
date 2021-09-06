@@ -17,6 +17,11 @@
             "description": "简单模块模板",
             "default_path": "{{ module_name }}/{{ module_name }}.go"
         },
+        "xormproxy": {
+            "source": "module/xormproxy",
+            "description": "xorm的代理模块",
+            "default_path": "xormproxy"
+        },
         "plugin_module": {
             "source": "plugin/plugin_module.go.jinja",
             "description": "插件模块模板",
