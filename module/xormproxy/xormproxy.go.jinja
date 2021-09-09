@@ -2,10 +2,12 @@
 package xormproxy
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	log "github.com/Golang-Tools/loggerhelper"
 	_ "github.com/mattn/go-sqlite3" //根据使用的driver填写
@@ -25,6 +27,7 @@ type Callback func(cli xorm.EngineInterface) error
 type xormProxy struct {
 	xorm.EngineInterface
 	parallelcallback bool
+	queryTimeout     time.Duration
 	callBacks        []Callback
 }
 
@@ -64,6 +67,9 @@ func (proxy *xormProxy) SetConnect(cli *xorm.Engine, opts ...Option) error {
 	}
 	if DefaultOption.ShowSQL {
 		proxy.EngineInterface.ShowSQL(true)
+	}
+	if DefaultOption.QueryTimeout > 0 {
+		proxy.queryTimeout = time.Duration(DefaultOption.QueryTimeout) * time.Millisecond
 	}
 
 	if proxy.parallelcallback {
@@ -128,6 +134,7 @@ func (proxy *xormProxy) InitFromURL(u string, opts ...Option) error {
 	}
 	proxy.parallelcallback = false
 	proxy.SetConnect(engine, opts...)
+	return nil
 }
 
 //InitFromURLParallelCallback 从URL条件初始化代理对象
@@ -138,6 +145,7 @@ func (proxy *xormProxy) InitFromURLParallelCallback(u string, opts ...Option) er
 	}
 	proxy.parallelcallback = true
 	proxy.SetConnect(engine, opts...)
+	return nil
 }
 
 // Regist 注册回调函数,在init执行后执行回调函数
@@ -148,6 +156,17 @@ func (proxy *xormProxy) Regist(cb Callback) error {
 	}
 	proxy.callBacks = append(proxy.callBacks, cb)
 	return nil
+}
+
+// NewCtx 根据注册的超时时间构造一个上下文
+func (proxy *xormProxy) NewCtx() (ctx context.Context, cancel context.CancelFunc) {
+	if proxy.queryTimeout > 0 {
+		timeout := proxy.queryTimeout
+		ctx, cancel = context.WithTimeout(context.Background(), timeout)
+	} else {
+		ctx, cancel = context.WithCancel(context.Background())
+	}
+	return
 }
 
 //DB 默认的xorm代理对象

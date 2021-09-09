@@ -8,6 +8,7 @@ type Options struct {
 	ShowSQL      bool
 	MaxIdle      int
 	MaxOpenConns int
+	QueryTimeout int
 }
 
 // Option configures how we set up the connection.
@@ -48,5 +49,12 @@ func WithMaxIdle(MaxIdle int) Option {
 func WithMaxOpenConns(MaxOpenConns int) Option {
 	return newFuncOption(func(o *Options) {
 		o.MaxOpenConns = MaxOpenConns
+	})
+}
+
+//WithQueryTimeoutMS 设置最大打开连接数
+func WithQueryTimeoutMS(QueryTimeout int) Option {
+	return newFuncOption(func(o *Options) {
+		o.QueryTimeout = QueryTimeout
 	})
 }
