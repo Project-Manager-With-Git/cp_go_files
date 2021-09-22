@@ -155,15 +155,5 @@ func (proxy *XormProxy) Regist(cb Callback) error {
 	return nil
 }
 
-// NewCtx 根据注册的超时时间构造一个上下文
-func (proxy *XormProxy) NewCtx() (ctx context.Context, cancel context.CancelFunc) {
-	if proxy.opts.QueryTimeout > 0 {
-		ctx, cancel = context.WithTimeout(context.Background(), proxy.opts.QueryTimeout)
-	} else {
-		ctx, cancel = context.WithCancel(context.Background())
-	}
-	return
-}
-
 //DB 默认的xorm代理对象
 var DB = New()

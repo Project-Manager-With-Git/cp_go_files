@@ -11,7 +11,6 @@ import (
 type Options struct {
 	URL              string
 	Parallelcallback bool
-	QueryTimeout     time.Duration
 	MaxOpenConns     int
 	ConnMaxLifetime  time.Duration
 	MaxIdleConns     int
@@ -42,13 +41,6 @@ func newFuncOption(f func(*Options)) *funcOption {
 	return &funcOption{
 		f: f,
 	}
-}
-
-//WithQueryTimeout 设置最大请求超时,单位ms
-func WithQueryTimeout(QueryTimeout time.Duration) Option {
-	return newFuncOption(func(o *Options) {
-		o.QueryTimeout = QueryTimeout
-	})
 }
 
 //WithParallelCallback 设置初始化后回调并行执行而非串行执行
