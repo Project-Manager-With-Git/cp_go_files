@@ -1,14 +1,27 @@
 //选项模块,Init函数的可选参数在这里定义
 package xormproxy
 
+import (
+	"time"
+
+	"github.com/xormplus/xorm/log"
+)
+
 //Option 设置key行为的选项
-//@attribute MaxTTL time.Duration 为0则不设置过期
-//@attribute AutoRefresh string 需要为crontab格式的字符串,否则不会自动定时刷新
 type Options struct {
-	ShowSQL      bool
-	MaxIdle      int
-	MaxOpenConns int
-	QueryTimeout int
+	URL              string
+	Parallelcallback bool
+	QueryTimeout     time.Duration
+	MaxOpenConns     int
+	ConnMaxLifetime  time.Duration
+	MaxIdleConns     int
+	LogLevel         log.LogLevel
+	ShowSQL          bool
+}
+
+var DefaultOpts = Options{
+	URL:      "sqlite://:memory:?cache=shared",
+	LogLevel: log.LOG_DEBUG,
 }
 
 // Option configures how we set up the connection.
@@ -31,30 +44,82 @@ func newFuncOption(f func(*Options)) *funcOption {
 	}
 }
 
-//WithMaxTTL 设置最大过期时间
-func ShowSQL() Option {
+//WithQueryTimeout 设置最大请求超时,单位ms
+func WithQueryTimeout(QueryTimeout time.Duration) Option {
 	return newFuncOption(func(o *Options) {
-		o.ShowSQL = true
+		o.QueryTimeout = QueryTimeout
 	})
 }
 
-//WithMaxIdle 设置最长空置时间
-func WithMaxIdle(MaxIdle int) Option {
+//WithParallelCallback 设置初始化后回调并行执行而非串行执行
+func WithParallelCallback() Option {
 	return newFuncOption(func(o *Options) {
-		o.MaxIdle = MaxIdle
+		o.Parallelcallback = true
 	})
 }
 
-//WithMaxOpenConns 设置最大打开连接数
+//WithURL 使用要连接的数据库管理系统的url
+func WithURL(URL string) Option {
+	return newFuncOption(func(o *Options) {
+		o.URL = URL
+	})
+}
+
+//WithMaxOpenConns 设置连接池的最大连接数
 func WithMaxOpenConns(MaxOpenConns int) Option {
 	return newFuncOption(func(o *Options) {
 		o.MaxOpenConns = MaxOpenConns
 	})
 }
 
-//WithQueryTimeoutMS 设置最大打开连接数
-func WithQueryTimeoutMS(QueryTimeout int) Option {
+//WithConnMaxLifetimeMS 设置连接池的最大连接超时时间,单位ms
+func WithConnMaxLifetimeMS(ConnMaxLifetimeMS int) Option {
 	return newFuncOption(func(o *Options) {
-		o.QueryTimeout = QueryTimeout
+		o.ConnMaxLifetime = time.Duration(ConnMaxLifetimeMS) * time.Millisecond
+	})
+}
+
+//WithMaxIdleConns 设置连接池的最大空闲连接数
+func WithMaxIdleConns(MaxIdleConns int) Option {
+	return newFuncOption(func(o *Options) {
+		o.MaxIdleConns = MaxIdleConns
+	})
+}
+
+func WithLogLevel(level string) Option {
+	return newFuncOption(func(o *Options) {
+		switch level {
+		case "DEBUG":
+			{
+				o.LogLevel = log.LOG_DEBUG
+			}
+		case "INFO":
+			{
+				o.LogLevel = log.LOG_INFO
+			}
+		case "WARN":
+			{
+				o.LogLevel = log.LOG_WARNING
+			}
+		case "ERROR":
+			{
+				o.LogLevel = log.LOG_ERR
+			}
+		case "OFF":
+			{
+				o.LogLevel = log.LOG_OFF
+			}
+		default:
+			{
+				o.LogLevel = log.LOG_DEBUG
+			}
+		}
+	})
+}
+
+//WithMaxTTL 设置最大过期时间
+func ShowSQL() Option {
+	return newFuncOption(func(o *Options) {
+		o.ShowSQL = true
 	})
 }

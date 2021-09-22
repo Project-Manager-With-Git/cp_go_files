@@ -3,79 +3,50 @@ package xormproxy
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/url"
 	"strings"
-	"time"
 
 	log "github.com/Golang-Tools/loggerhelper"
+	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3" //根据使用的driver填写
 	"github.com/xormplus/xorm"
 )
 
-//ErrProxyAllreadySettedClient 代理已经设置过redis客户端对象
-var ErrProxyAllreadySettedClient = errors.New("代理不能重复设置客户端对象")
-
-//ErrUnSupportSchema 不支持的数据库类型
-var ErrUnSupportSchema = errors.New("不支持的数据库类型")
-
 //Callback redis操作的回调函数
 type Callback func(cli xorm.EngineInterface) error
 
-//xormProxy redis客户端的代理
-type xormProxy struct {
-	xorm.EngineInterface
-	parallelcallback bool
-	queryTimeout     time.Duration
-	callBacks        []Callback
+//XormProxy redis客户端的代理
+type XormProxy struct {
+	*xorm.Engine
+	opts      Options
+	callBacks []Callback
 }
 
 // New 创建一个新的数据库客户端代理
-func New() *xormProxy {
-	proxy := new(xormProxy)
+func New() *XormProxy {
+	proxy := new(XormProxy)
 	return proxy
 }
 
 // IsOk 检查代理是否已经可用
-func (proxy *xormProxy) IsOk() bool {
-	if proxy.EngineInterface == nil {
-		return false
-	}
-	return true
+func (proxy *XormProxy) IsOk() bool {
+	return proxy.Engine != nil
 }
 
 //SetConnect 设置连接的客户端
 //@params cli UniversalClient 满足redis.UniversalClient接口的对象的指针
-func (proxy *xormProxy) SetConnect(cli *xorm.Engine, opts ...Option) error {
+func (proxy *XormProxy) SetConnect(cli *xorm.Engine) error {
 	if proxy.IsOk() {
-		return ErrProxyAllreadySettedClient
+		return ErrProxyAllreadySettedUniversalClient
 	}
+	proxy.Engine = cli
 
-	proxy.EngineInterface = cli
-	DefaultOption := &Options{
-		ShowSQL: true,
-	}
-	for _, opt := range opts {
-		opt.Apply(DefaultOption)
-	}
-	if DefaultOption.MaxIdle > 0 {
-		proxy.EngineInterface.SetMaxIdleConns(DefaultOption.MaxIdle)
-	}
-	if DefaultOption.MaxOpenConns > 0 {
-		proxy.EngineInterface.SetMaxOpenConns(DefaultOption.MaxOpenConns)
-	}
-	if DefaultOption.ShowSQL {
-		proxy.EngineInterface.ShowSQL(true)
-	}
-	if DefaultOption.QueryTimeout > 0 {
-		proxy.queryTimeout = time.Duration(DefaultOption.QueryTimeout) * time.Millisecond
-	}
-
-	if proxy.parallelcallback {
+	if proxy.opts.Parallelcallback {
 		for _, cb := range proxy.callBacks {
 			go func(cb Callback) {
-				err := cb(proxy.EngineInterface)
+				err := cb(proxy.Engine)
 				if err != nil {
 					log.Error("regist callback get error", log.Dict{"err": err})
 				} else {
@@ -85,7 +56,7 @@ func (proxy *xormProxy) SetConnect(cli *xorm.Engine, opts ...Option) error {
 		}
 	} else {
 		for _, cb := range proxy.callBacks {
-			err := cb(proxy.EngineInterface)
+			err := cb(proxy.Engine)
 			if err != nil {
 				log.Error("regist callback get error", log.Dict{"err": err})
 			} else {
@@ -96,73 +67,98 @@ func (proxy *xormProxy) SetConnect(cli *xorm.Engine, opts ...Option) error {
 	return nil
 }
 
-func make_engine_from_url(u string) (*xorm.Engine, error) {
-	U, err := url.Parse(u)
-	if err != nil {
-		return nil, err
+func (proxy *XormProxy) SetPool(sqldb *xorm.Engine) {
+	if proxy.opts.MaxIdleConns > 0 {
+		sqldb.SetMaxIdleConns(proxy.opts.MaxIdleConns)
 	}
-	dataSourceName := strings.ReplaceAll(u, fmt.Sprintf("%s://", U.Scheme), "")
-	switch U.Scheme {
-	case "postgres":
-		{
-			return xorm.NewEngine("postgres", u)
-		}
-	case "mysql":
-		{
-			return xorm.NewEngine("mysql", dataSourceName)
-		}
-	case "sqlserver":
-		{
-			return xorm.NewEngine("mssql", u)
-		}
-	case "sqlite":
-		{
-			return xorm.NewEngine("sqlite3", dataSourceName)
-		}
-	default:
-		{
-			return nil, ErrUnSupportSchema
-		}
+	if proxy.opts.MaxOpenConns > 0 {
+		sqldb.SetMaxOpenConns(proxy.opts.MaxOpenConns)
 	}
+	if proxy.opts.ConnMaxLifetime > 0 {
+		sqldb.SetConnMaxLifetime(proxy.opts.ConnMaxLifetime)
+	}
+	if proxy.opts.ShowSQL {
+		sqldb.ShowSQL(true)
+	}
+	sqldb.SetLogLevel(proxy.opts.LogLevel)
 }
 
 //InitFromURL 从URL条件初始化代理对象
-func (proxy *xormProxy) InitFromURL(u string, opts ...Option) error {
-	engine, err := make_engine_from_url(u)
+func (proxy *XormProxy) Init(opts ...Option) error {
+	for _, opt := range opts {
+		opt.Apply(&proxy.opts)
+	}
+	var sqldb *xorm.Engine
+	U, err := url.Parse(proxy.opts.URL)
 	if err != nil {
 		return err
 	}
-	proxy.parallelcallback = false
-	proxy.SetConnect(engine, opts...)
-	return nil
-}
+	switch U.Scheme {
+	case "postgres":
+		{
+			sqldb, err = xorm.NewEngine("postgres", proxy.opts.URL)
+			if err != nil {
+				return err
+			}
+			proxy.SetPool(sqldb)
 
-//InitFromURLParallelCallback 从URL条件初始化代理对象
-func (proxy *xormProxy) InitFromURLParallelCallback(u string, opts ...Option) error {
-	engine, err := make_engine_from_url(u)
-	if err != nil {
-		return err
+		}
+	case "mysql":
+		{
+			userinfo := ""
+			username := U.User.Username()
+			pwd, ok := U.User.Password()
+			if ok && username != "" {
+				userinfo = fmt.Sprintf("%s:%s@", username, pwd)
+			} else if ok && username == "" {
+				userinfo = fmt.Sprintf(":%s@", pwd)
+			} else if !ok && username != "" {
+				userinfo = fmt.Sprintf("%s@", username)
+			}
+			dataSourceName := fmt.Sprintf("%stcp(%s)%s?%s", userinfo, U.Host, U.Path, U.RawQuery)
+			sqldb, err = xorm.NewEngine("mysql", dataSourceName)
+			if err != nil {
+				return err
+			}
+			proxy.SetPool(sqldb)
+
+		}
+	case "sqlite":
+		{
+			dataSourceName := strings.ReplaceAll(proxy.opts.URL, fmt.Sprintf("%s://", U.Scheme), "")
+			sqldb, err = xorm.NewEngine("sqlite3", dataSourceName)
+			if err != nil {
+				return err
+			}
+			if !strings.Contains(dataSourceName, ":memory:") {
+				proxy.SetPool(sqldb)
+			} else {
+				sqldb.SetMaxIdleConns(1000)
+				sqldb.SetConnMaxLifetime(0)
+			}
+		}
+	default:
+		{
+			return ErrUnSupportSchema
+		}
 	}
-	proxy.parallelcallback = true
-	proxy.SetConnect(engine, opts...)
-	return nil
+	return proxy.SetConnect(sqldb)
 }
 
 // Regist 注册回调函数,在init执行后执行回调函数
 //如果对象已经设置了被代理客户端则无法再注册回调函数
-func (proxy *xormProxy) Regist(cb Callback) error {
+func (proxy *XormProxy) Regist(cb Callback) error {
 	if proxy.IsOk() {
-		return ErrProxyAllreadySettedClient
+		return ErrProxyAllreadySettedUniversalClient
 	}
 	proxy.callBacks = append(proxy.callBacks, cb)
 	return nil
 }
 
 // NewCtx 根据注册的超时时间构造一个上下文
-func (proxy *xormProxy) NewCtx() (ctx context.Context, cancel context.CancelFunc) {
-	if proxy.queryTimeout > 0 {
-		timeout := proxy.queryTimeout
-		ctx, cancel = context.WithTimeout(context.Background(), timeout)
+func (proxy *XormProxy) NewCtx() (ctx context.Context, cancel context.CancelFunc) {
+	if proxy.opts.QueryTimeout > 0 {
+		ctx, cancel = context.WithTimeout(context.Background(), proxy.opts.QueryTimeout)
 	} else {
 		ctx, cancel = context.WithCancel(context.Background())
 	}
